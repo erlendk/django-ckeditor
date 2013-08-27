@@ -181,3 +181,62 @@ def browse(request):
         'images': get_image_browse_urls(request.user),
     })
     return render_to_response('browse.html', context)
+
+
+@csrf_exempt
+def fb_upload(request):
+    """
+    The idea and a lot of code stolen from The Atlantic
+    https://github.com/theatlantic/django-ckeditor/blob/atl/4.1.x/ckeditor/views.py
+
+    A wrapper around django-filebrowser's file upload view. It returns a
+    javascript function call to CKEDITOR.tools.callFunction(), which
+    CKEDITOR expects.
+    """
+    # Set the upload folder, if not declared otherwise
+    if not request.GET.get('folder'):
+        from django.utils.timezone import now
+        request.GET = request.GET.copy()
+        request.GET['folder'] = now().strftime('%Y/%m/%d')
+
+    try:
+        from filebrowser.sites import site
+    except ImportError:
+        raise Exception(
+                "django-filebrowser must be installed and be of version 3.5.3 or greater; "
+                "currently at version %s" % filebrowser.VERSION)
+    upload_file_view = site._upload_file
+
+    # Connect to django-filebrowser's filebrowser_post_upload signal.
+    # This is the only way to get the uploaded file's location into ckeditor.views.fb_upload 
+    # when wrapping a call to the filebrowser's file upload view function.
+    try:
+        # django-filebrowser >= 3.5.0
+        from filebrowser.signals import filebrowser_post_upload
+    except ImportError:
+        raise Exception(
+                "django-filebrowser must be installed and be of version 3.5.3 or greater; "
+                "currently at version %s" % filebrowser.VERSION)
+    
+    request.fb_upload_file = None
+
+    def post_upload_callback(sender, **kwargs):
+        # sender will be the request passed to upload_file_view
+        sender.fb_upload_file = kwargs.get('file')
+    filebrowser_post_upload.connect(post_upload_callback, dispatch_uid='django_ckeditor__fb_upload__filebrowser_post_upload')
+
+    # Call original view function.
+    # Within this function, the filebrowser_post_upload signal will be sent,
+    # and our signal receiver will add the filebrowser.base.FileObject instance to request.fb_upload_file.
+    upload_file_view(request)
+
+    # clean up signal connection
+    filebrowser_post_upload.disconnect(post_upload_callback, dispatch_uid='django_ckeditor__fb_upload__filebrowser_post_upload')
+    
+    if not request.fb_upload_file:
+        return HttpResponse("Error uploading file")
+    
+    return HttpResponse("""
+    <script type='text/javascript'>
+    window.parent.CKEDITOR.tools.callFunction(%s, '%s');
+    </script>""" % (request.GET['CKEditorFuncNum'], request.fb_upload_file.url))
