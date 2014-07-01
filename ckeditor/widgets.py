@@ -4,7 +4,8 @@ from django.core.urlresolvers import reverse
 from django.template.loader import render_to_string
 from django.utils.safestring import mark_safe
 from django.utils.html import conditional_escape
-from django.utils.encoding import force_unicode
+from django.utils.encoding import force_text
+from django.utils.translation import get_language
 from django.core.exceptions import ImproperlyConfigured
 from django.forms.util import flatatt
 import json
@@ -48,7 +49,7 @@ class CKEditorWidget(forms.Textarea):
                     uploaded media). Make sure to use a trailing slash: \
                     CKEDITOR_MEDIA_PREFIX = '/media/ckeditor/'")
 
-    def __init__(self, config_name='default', *args, **kwargs):
+    def __init__(self, config_name='default', extra_plugins=None, external_plugin_resources=None, *args, **kwargs):
         super(CKEditorWidget, self).__init__(*args, **kwargs)
         # Setup config from defaults.
         self.config = DEFAULT_CONFIG.copy()
@@ -74,18 +75,27 @@ class CKEditorWidget(forms.Textarea):
             else:
                 raise ImproperlyConfigured('CKEDITOR_CONFIGS setting must be a\
                         dictionary type.')
+        
+        extra_plugins = extra_plugins or []
+        
+        if extra_plugins:
+            self.config['extraPlugins'] = ','.join(extra_plugins)
+
+        self.external_plugin_resources = external_plugin_resources or []
 
     def render(self, name, value, attrs={}):
         if value is None:
             value = ''
         final_attrs = self.build_attrs(attrs, name=name)
-        if not self.config.get('filebrowserUploadUrl'):
-            self.config['filebrowserUploadUrl'] = reverse('ckeditor_upload')
-        if not self.config.get('filebrowserBrowseUrl'):
-            self.config['filebrowserBrowseUrl'] = reverse('ckeditor_browse')
+        self.config.setdefault('filebrowserUploadUrl', reverse('ckeditor_upload'))
+        self.config.setdefault('filebrowserBrowseUrl', reverse('ckeditor_browse'))
+        if not self.config.get('language'):
+            self.config['language'] = get_language()
+
         return mark_safe(render_to_string('ckeditor/widget.html', {
             'final_attrs': flatatt(final_attrs),
-            'value': conditional_escape(force_unicode(value)),
+            'value': conditional_escape(force_text(value)),
             'id': final_attrs['id'],
-            'config': json_encode(self.config)
+            'config': json_encode(self.config),
+            'external_plugin_resources' : self.external_plugin_resources
         }))
